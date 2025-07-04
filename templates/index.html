@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>🎾 Hough-Circle Tennis-Ball Tracker</title>
   <style>
     body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
@@ -24,64 +24,74 @@
     </div>
   </div>
 
+  <!-- Start camera on load -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const video = document.getElementById('video');
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => { video.srcObject = stream; video.play(); })
+          .catch(err => alert('Camera error: ' + err.message));
+      } else {
+        alert('Camera API not supported');
+      }
+    });
+  </script>
+
   <!-- Load OpenCV.js -->
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <script>
-    cv['onRuntimeInitialized'] = () => {
-      const video  = document.getElementById('video');
+    function onOpenCvReady() {
+      const video = document.getElementById('video');
       const canvas = document.getElementById('canvas');
-      const ctx    = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d');
       const w = 640, h = 480;
 
-      // Mats
-      const src   = new cv.Mat(h, w, cv.CV_8UC4);
-      const gray  = new cv.Mat();
-      const blur  = new cv.Mat();
+      // Pre-allocate Mats
+      const src    = new cv.Mat(h, w, cv.CV_8UC4);
+      const gray   = new cv.Mat();
+      const blur   = new cv.Mat();
       const circles = new cv.Mat();
 
-      // Start camera
-      navigator.mediaDevices.getUserMedia({video:true})
-        .then(s => video.srcObject = s)
-        .catch(e=>alert('Camera error:'+e.message));
-
-      // Processing loop
-      video.addEventListener('playing', () => {
-        function process() {
-          // grab frame
+      // Processing loop\ n      function process() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          // Capture frame
           ctx.drawImage(video, 0, 0, w, h);
-          let imgData = ctx.getImageData(0,0,w,h);
+          let imgData = ctx.getImageData(0, 0, w, h);
           src.data.set(imgData.data);
 
-          // to grayscale + blur
+          // Gray + blur
           cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
           cv.GaussianBlur(gray, blur, new cv.Size(9,9), 2);
 
-          // HoughCircles params:
-          // dp=1.2, minDist=100, param1=50, param2=30, minR=10, maxR=200
+          // HoughCircles
           cv.HoughCircles(blur, circles, cv.HOUGH_GRADIENT,
-                          1.2, 100,
-                          50, 30,
-                          10, 200);
+                          1.2, 100, 50, 30, 10, 200);
 
-          // draw raw
+          // Draw raw
           ctx.drawImage(video, 0, 0, w, h);
-          // draw detected circle
+
+          // Draw first circle
           if (circles.rows > 0) {
-            const c = circles.data32F;
-            // pick the first circle
-            const x = c[0], y = c[1], r = c[2];
+            const x = circles.data32F[0];
+            const y = circles.data32F[1];
+            const r = circles.data32F[2];
             ctx.strokeStyle = '#FFFF00';
             ctx.lineWidth   = 4;
             ctx.beginPath();
-            ctx.arc(x, y, r, 0, 2*Math.PI);
+            ctx.arc(x, y, r, 0, 2 * Math.PI);
             ctx.stroke();
           }
-
-          requestAnimationFrame(process);
         }
         requestAnimationFrame(process);
-      });
-    };
+      }
+
+      // Kick off
+      process();
+    }
+    // Bind callback
+    if (typeof cv !== 'undefined') cv['onRuntimeInitialized'] = onOpenCvReady;
+    else window.addEventListener('opencvload', onOpenCvReady);
   </script>
 </body>
 </html>
