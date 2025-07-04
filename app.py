@@ -1,27 +1,24 @@
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, Response
 import cv2
 import numpy as np
-import io, base64, os
+import os
 
 app = Flask(__name__)
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# Initialize webcam
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    raise RuntimeError('Could not open video device')
 
-@app.route('/process', methods=['POST'])
-def process():
-    # Receive image from client as data URL
-    data_url = request.json.get('image', '')
-    _, b64data = data_url.split(',', 1)
-    img_data = base64.b64decode(b64data)
 
-    # Decode to OpenCV image
-    nparr = np.frombuffer(img_data, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    # ------- Tennis-ball detection (yellow range) -------
-    blurred = cv2.GaussianBlur(frame, (11, 11), 0)
+def detect_ball_and_corners(frame):
+    """
+    Returns a processed copy of the frame with
+    a yellow circle around the ball and corner points.
+    """
+    proc = frame.copy()
+    # Tennis-ball detection (yellow range)
+    blurred = cv2.GaussianBlur(proc, (11, 11), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
     lower_yellow = np.array([20, 100, 100])
     upper_yellow = np.array([40, 255, 255])
@@ -33,21 +30,50 @@ def process():
         c = max(contours, key=cv2.contourArea)
         (x, y), radius = cv2.minEnclosingCircle(c)
         if radius > 10:
-            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
+            cv2.circle(proc, (int(x), int(y)), int(radius), (0, 255, 255), 2)
 
-    # ------- Corner detection -------
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # Corner detection (Shi-Tomasi)
+    gray = cv2.cvtColor(proc, cv2.COLOR_BGR2GRAY)
     corners = cv2.goodFeaturesToTrack(gray, maxCorners=50, qualityLevel=0.01, minDistance=10)
     if corners is not None:
         for pt in corners:
             x1, y1 = pt.ravel()
-            cv2.circle(frame, (int(x1), int(y1)), 3, (255, 0, 0), -1)
+            cv2.circle(proc, (int(x1), int(y1)), 3, (255, 0, 0), -1)
 
-    # Encode annotated frame back to JPEG
-    ret, buf = cv2.imencode('.jpg', frame)
-    return send_file(
-        io.BytesIO(buf.tobytes()),
-        mimetype='image/jpeg'
+    return proc
+
+
+def gen_frames():
+    """Video streaming generator: yields combined original + processed frames."""
+    while True:
+        success, frame = cap.read()
+        if not success:
+            continue
+
+        # Detect ball and corners on a copy
+        processed = detect_ball_and_corners(frame)
+
+        # Stack original and processed side by side
+        combined = np.hstack((frame, processed))
+
+        # Encode as JPEG
+        ret, buffer = cv2.imencode('.jpg', combined)
+        frame_bytes = buffer.tobytes()
+
+        yield (
+            b'--frame\r\n'
+            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n'
+        )
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(
+        gen_frames(),
+        mimetype='multipart/x-mixed-replace; boundary=frame'
     )
 
 if __name__ == '__main__':
