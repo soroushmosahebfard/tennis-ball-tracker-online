@@ -2,14 +2,51 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Tennis Ball Tracker</title>
+  <title>Tennis Tracker</title>
   <style>
-    body { background: #111; color: #eee; text-align: center; }
-    img  { border: 4px solid #4caf50; margin-top: 20px; }
+    body { background: #111; color: #fff; text-align: center; }
+    video, canvas { margin: 10px; border: 4px solid #4caf50; }
   </style>
 </head>
 <body>
-  <h1>Live Tennis-Ball Tracker</h1>
-  <img src="{{ url_for('video_feed') }}" width="640" />
+  <h1>🎾 Live Tennis-Ball Tracker</h1>
+  <video id="video" width="640" autoplay muted playsinline></video>
+  <canvas id="output" width="640" height="480"></canvas>
+
+  <script>
+    const video  = document.getElementById('video');
+    const output = document.getElementById('output');
+    const ctx    = output.getContext('2d');
+
+    // 1) getUserMedia
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => { video.srcObject = stream; })
+      .catch(console.error);
+
+    // 2) capture & send frames
+    video.addEventListener('play', () => {
+      const sendFrame = async () => {
+        // draw current video frame to an offscreen canvas
+        ctx.drawImage(video, 0, 0, output.width, output.height);
+        const dataURL = output.toDataURL('image/jpeg');
+
+        // post to server
+        const res = await fetch('/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: dataURL })
+        });
+        const blob = await res.blob();
+        const img  = await createImageBitmap(blob);
+
+        // paint processed frame back onto canvas
+        ctx.drawImage(img, 0, 0, output.width, output.height);
+
+        // next frame
+        requestAnimationFrame(sendFrame);
+      };
+      sendFrame();
+    });
+  </script>
 </body>
 </html>
