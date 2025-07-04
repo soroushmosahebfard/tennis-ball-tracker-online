@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>🎾 JS Tennis-Ball Tracker (Centroid)</title>
+  <title>🎾 Hough-Circle Tennis-Ball Tracker</title>
   <style>
     body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
     #wrapper { display: flex; justify-content: center; gap: 20px; margin-top: 20px; }
@@ -12,7 +12,7 @@
   </style>
 </head>
 <body>
-  <h1>🔍 JS Tennis-Ball Tracker (Centroid Method)</h1>
+  <h1>🔍 Hough-Circle Tennis-Ball Tracker</h1>
   <div id="wrapper">
     <div class="feed">
       <p>Raw Feed</p>
@@ -24,67 +24,64 @@
     </div>
   </div>
 
-  <!-- hidden canvas for pixel capture -->
-  <canvas id="hidden" width="640" height="480" style="display:none;"></canvas>
-
+  <!-- Load OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <script>
-    const video = document.getElementById('video');
-    const hidden = document.getElementById('hidden');
-    const canvas = document.getElementById('canvas');
-    const hctx = hidden.getContext('2d');
-    const ctx = canvas.getContext('2d');
-    const w = 640, h = 480;
+    cv['onRuntimeInitialized'] = () => {
+      const video  = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const ctx    = canvas.getContext('2d');
+      const w = 640, h = 480;
 
-    // start camera
-    if (navigator.mediaDevices?.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: true })
-        .then(stream => video.srcObject = stream)
-        .catch(err => alert('Camera error: ' + err.message));
-    } else {
-      alert('getUserMedia not supported');
-    }
+      // Mats
+      const src   = new cv.Mat(h, w, cv.CV_8UC4);
+      const gray  = new cv.Mat();
+      const blur  = new cv.Mat();
+      const circles = new cv.Mat();
 
-    video.addEventListener('play', () => {
-      function detect() {
-        // draw input frame
-        hctx.drawImage(video, 0, 0, w, h);
-        const frame = hctx.getImageData(0, 0, w, h);
-        const data = frame.data;
+      // Start camera
+      navigator.mediaDevices.getUserMedia({video:true})
+        .then(s => video.srcObject = s)
+        .catch(e=>alert('Camera error:'+e.message));
 
-        // accumulate greenish pixels
-        let sumX = 0, sumY = 0, count = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i], g = data[i+1], b = data[i+2];
-          // improved threshold: green dominant & bright
-          if (g > 120 && g > r + 30 && g > b + 30) {
-            const idx = i >> 2;
-            const x = idx % w;
-            const y = (idx / w) | 0;
-            sumX += x;
-            sumY += y;
-            count++;
+      // Processing loop
+      video.addEventListener('playing', () => {
+        function process() {
+          // grab frame
+          ctx.drawImage(video, 0, 0, w, h);
+          let imgData = ctx.getImageData(0,0,w,h);
+          src.data.set(imgData.data);
+
+          // to grayscale + blur
+          cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+          cv.GaussianBlur(gray, blur, new cv.Size(9,9), 2);
+
+          // HoughCircles params:
+          // dp=1.2, minDist=100, param1=50, param2=30, minR=10, maxR=200
+          cv.HoughCircles(blur, circles, cv.HOUGH_GRADIENT,
+                          1.2, 100,
+                          50, 30,
+                          10, 200);
+
+          // draw raw
+          ctx.drawImage(video, 0, 0, w, h);
+          // draw detected circle
+          if (circles.rows > 0) {
+            const c = circles.data32F;
+            // pick the first circle
+            const x = c[0], y = c[1], r = c[2];
+            ctx.strokeStyle = '#FFFF00';
+            ctx.lineWidth   = 4;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, 2*Math.PI);
+            ctx.stroke();
           }
+
+          requestAnimationFrame(process);
         }
-
-        // draw raw
-        ctx.drawImage(video, 0, 0, w, h);
-
-        // if enough pixels, draw circle at centroid
-        if (count > 200) {
-          const cx = sumX / count;
-          const cy = sumY / count;
-          const radius = Math.sqrt(count / Math.PI);
-          ctx.strokeStyle = '#FFFF00';
-          ctx.lineWidth = 4;
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
-          ctx.stroke();
-        }
-
-        requestAnimationFrame(detect);
-      }
-      detect();
-    });
+        requestAnimationFrame(process);
+      });
+    };
   </script>
 </body>
 </html>
