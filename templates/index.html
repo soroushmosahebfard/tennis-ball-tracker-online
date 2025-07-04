@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>🎾 Hough-Circle Tennis-Ball Tracker</title>
+  <meta charset="UTF-8" />
+  <title>🎾 Robust Tennis-Ball Tracker</title>
   <style>
-    body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
-    #wrapper { display: flex; justify-content: center; gap: 20px; margin-top: 20px; }
-    .feed { display: flex; flex-direction: column; align-items: center; }
-    video, canvas { border: 4px solid #4caf50; }
-    .feed p { margin: 6px 0; }
+    body { background:#111; color:#fff; text-align:center; margin:0; }
+    #wrapper { display:flex; justify-content:center; gap:20px; padding:20px; }
+    .feed { display:flex; flex-direction:column; align-items:center; }
+    video, canvas { border:4px solid #4caf50; }
+    .feed p { margin:8px 0; font-size:1.2em; }
   </style>
 </head>
 <body>
-  <h1>🔍 Hough-Circle Tennis-Ball Tracker</h1>
+  <h1>🔍 Robust Tennis-Ball Tracker (TF.js)</h1>
   <div id="wrapper">
     <div class="feed">
       <p>Raw Feed</p>
@@ -24,74 +24,58 @@
     </div>
   </div>
 
-  <!-- Start camera on load -->
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const video = document.getElementById('video');
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ video: true })
-          .then(stream => { video.srcObject = stream; video.play(); })
-          .catch(err => alert('Camera error: ' + err.message));
-      } else {
-        alert('Camera API not supported');
-      }
-    });
-  </script>
+  <!-- 1) Load TF.js & COCO-SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.9.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-  <!-- Load OpenCV.js -->
-  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <script>
-    function onOpenCvReady() {
+    async function setupCamera() {
       const video = document.getElementById('video');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      return new Promise(res => video.onloadedmetadata = () => res(video));
+    }
+
+    async function main() {
+      // 2) Start the webcam
+      const video  = await setupCamera();
+      video.play();
+
+      // 3) Load the COCO-SSD model
+      const model = await cocoSsd.load();
+      console.log('✅ COCO-SSD model loaded');
+
       const canvas = document.getElementById('canvas');
-      const ctx = canvas.getContext('2d');
-      const w = 640, h = 480;
+      const ctx    = canvas.getContext('2d');
 
-      // Pre-allocate Mats
-      const src    = new cv.Mat(h, w, cv.CV_8UC4);
-      const gray   = new cv.Mat();
-      const blur   = new cv.Mat();
-      const circles = new cv.Mat();
+      // 4) Run detection in a loop
+      async function detectFrame() {
+        // draw the raw frame
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Processing loop\ n      function process() {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-          // Capture frame
-          ctx.drawImage(video, 0, 0, w, h);
-          let imgData = ctx.getImageData(0, 0, w, h);
-          src.data.set(imgData.data);
+        // run the model on the video element directly
+        const predictions = await model.detect(video);
 
-          // Gray + blur
-          cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-          cv.GaussianBlur(gray, blur, new cv.Size(9,9), 2);
-
-          // HoughCircles
-          cv.HoughCircles(blur, circles, cv.HOUGH_GRADIENT,
-                          1.2, 100, 50, 30, 10, 200);
-
-          // Draw raw
-          ctx.drawImage(video, 0, 0, w, h);
-
-          // Draw first circle
-          if (circles.rows > 0) {
-            const x = circles.data32F[0];
-            const y = circles.data32F[1];
-            const r = circles.data32F[2];
+        // overlay any tennis balls (class "sports ball")
+        predictions.forEach(p => {
+          if (p.class === 'sports ball' && p.score > 0.5) {
+            const [x, y, w, h] = p.bbox;
             ctx.strokeStyle = '#FFFF00';
             ctx.lineWidth   = 4;
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, 2 * Math.PI);
-            ctx.stroke();
+            ctx.strokeRect(x, y, w, h);
+            ctx.font = '24px sans-serif';
+            ctx.fillStyle = '#FFFF00';
+            ctx.fillText('🎾 ' + Math.round(p.score*100) + '%', x, y - 8);
           }
-        }
-        requestAnimationFrame(process);
+        });
+
+        requestAnimationFrame(detectFrame);
       }
 
-      // Kick off
-      process();
+      detectFrame();
     }
-    // Bind callback
-    if (typeof cv !== 'undefined') cv['onRuntimeInitialized'] = onOpenCvReady;
-    else window.addEventListener('opencvload', onOpenCvReady);
+
+    main().catch(console.error);
   </script>
 </body>
 </html>
