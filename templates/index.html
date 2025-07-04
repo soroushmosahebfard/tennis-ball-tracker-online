@@ -1,96 +1,109 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Live Tennis-Ball Tracker (Client Side)</title>
+  <meta charset="UTF-8" />
+  <title>Live Tennis-Ball + Corner Tracker</title>
   <style>
-    body { background:#111; color:#fff; text-align:center; }
-    canvas { border:4px solid #4caf50; margin-top:20px; }
+    body { background: #111; color: #fff; text-align: center; }
+    #wrapper { display: flex; justify-content: center; gap: 20px; }
+    video, canvas { border: 4px solid #4caf50; }
+    canvas { display: block; }
   </style>
 </head>
 <body>
-  <h1>🎾 Live Tennis-Ball + Corner Tracker</h1>
-  <video id="video" width="640" height="480" autoplay muted playsinline style="display:none"></video>
-  <canvas id="canvas" width="1280" height="480"></canvas>
+  <h1>🔍 Live Tennis-Ball + Corner Tracker</h1>
+  <div id="wrapper">
+    <div>
+      <p>Raw Feed</p>
+      <video id="video" width="640" height="480" autoplay muted playsinline></video>
+    </div>
+    <div>
+      <p>Processed</p>
+      <canvas id="output" width="640" height="480"></canvas>
+    </div>
+  </div>
 
-  <!-- Load OpenCV.js -->
-  <script async src="https://docs.opencv.org/4.x/opencv.js" 
-          onload="onOpenCvReady();"></script>
+  <!-- OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js"
+          onload="initTracker()" 
+          onerror="alert('Failed to load OpenCV.js');"></script>
+
   <script>
-    let video = document.getElementById('video');
-    let canvas = document.getElementById('canvas');
-    let ctx    = canvas.getContext('2d');
+  function initTracker() {
+    // 1) camera
+    const video = document.getElementById('video');
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(s => video.srcObject = s)
+      .catch(e => { console.error(e); alert('Camera error'); });
 
-    function onOpenCvReady() {
-      // 1) start camera
-      navigator.mediaDevices.getUserMedia({ video: true })
-        .then(stream => { video.srcObject = stream; })
-        .catch(err => console.error(err));
+    // 2) once OpenCV is ready and video playing, start loop
+    video.addEventListener('playing', () => {
+      const out = document.getElementById('output');
+      const ctx = out.getContext('2d');
 
-      video.addEventListener('play', processFrame);
-    }
+      // create mats once
+      const srcMat = new cv.Mat(480, 640, cv.CV_8UC4);
+      const hsvMat = new cv.Mat();
+      const maskMat = new cv.Mat();
+      const procMat = new cv.Mat();
+      const grayMat = new cv.Mat();
 
-    function processFrame() {
-      if (video.paused || video.ended) return;
-      // draw raw video on left half
-      ctx.drawImage(video, 0, 0, 640, 480);
+      function process() {
+        // draw frame from video
+        ctx.drawImage(video, 0, 0, 640, 480);
+        let imgData = ctx.getImageData(0,0,640,480);
+        srcMat.data.set(imgData.data);
 
-      // grab that image data
-      let src = cv.imread(canvas, {x:0,y:0,w:640,h:480});
-      let proc = src.clone();
+        // copy to procMat
+        srcMat.copyTo(procMat);
 
-      // --- tennis-ball detection (yellow) ---
-      let blurred = new cv.Mat();
-      cv.GaussianBlur(proc, blurred, new cv.Size(11,11), 0);
-      let hsv = new cv.Mat();
-      cv.cvtColor(blurred, hsv, cv.COLOR_BGR2HSV);
-      let lower = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [20,100,100,0]);
-      let upper = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [40,255,255,255]);
-      let mask = new cv.Mat();
-      cv.inRange(hsv, lower, upper, mask);
-      // clean up
-      cv.erode(mask, mask, new cv.Mat(), new cv.Point(-1,-1), 2);
-      cv.dilate(mask, mask, new cv.Mat(), new cv.Point(-1,-1), 2);
+        // 1) blur + HSV + mask
+        cv.GaussianBlur(procMat, procMat, new cv.Size(11,11), 0);
+        cv.cvtColor(procMat, hsvMat, cv.COLOR_RGBA2RGB);
+        cv.cvtColor(hsvMat, hsvMat, cv.COLOR_RGB2HSV);
+        let lower = new cv.Mat(hsvMat.rows, hsvMat.cols, hsvMat.type(), [20,100,100,0]);
+        let upper = new cv.Mat(hsvMat.rows, hsvMat.cols, hsvMat.type(), [40,255,255,255]);
+        cv.inRange(hsvMat, lower, upper, maskMat);
+        cv.erode(maskMat, maskMat, new cv.Mat(), new cv.Point(-1,-1), 2);
+        cv.dilate(maskMat, maskMat, new cv.Mat(), new cv.Point(-1,-1), 2);
 
-      // find contours
-      let contours = new cv.MatVector();
-      let hierarchy = new cv.Mat();
-      cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      if (contours.size() > 0) {
-        // pick largest
-        let maxIdx = 0, maxArea = 0;
-        for (let i=0; i<contours.size(); i++) {
-          let area = cv.contourArea(contours.get(i));
-          if (area > maxArea) { maxArea = area; maxIdx = i; }
+        // 2) contour detect
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(maskMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        if (contours.size() > 0) {
+          // largest
+          let maxIdx = 0, maxArea = 0;
+          for (let i=0; i<contours.size(); i++) {
+            let a = cv.contourArea(contours.get(i));
+            if (a > maxArea) { maxArea = a; maxIdx = i; }
+          }
+          let circle = cv.minEnclosingCircle(contours.get(maxIdx));
+          cv.circle(procMat, circle.center, circle.radius, [0,255,255,255], 2);
         }
-        let circle = cv.minEnclosingCircle(contours.get(maxIdx));
-        let center = circle.center, radius = circle.radius;
-        if (radius > 10) {
-          cv.circle(proc, center, radius, [0,255,255,255], 2);
+
+        // 3) corners
+        cv.cvtColor(procMat, grayMat, cv.COLOR_RGBA2GRAY);
+        let corners = new cv.Mat();
+        cv.goodFeaturesToTrack(grayMat, corners, 50, 0.01, 10);
+        for (let i=0; i<corners.rows; i++) {
+          let x = corners.data32F[i*2], y = corners.data32F[i*2+1];
+          cv.circle(procMat, new cv.Point(x,y), 3, [255,0,0,255], -1);
         }
+
+        // show processed
+        cv.imshow(out, procMat);
+
+        // schedule next
+        requestAnimationFrame(process);
+
+        // cleanup temporaries
+        lower.delete(); upper.delete(); contours.delete(); hierarchy.delete(); corners.delete();
       }
 
-      // --- Shi-Tomasi corners ---
-      let gray = new cv.Mat();
-      cv.cvtColor(proc, gray, cv.COLOR_BGR2GRAY);
-      let corners = new cv.Mat();
-      cv.goodFeaturesToTrack(gray, corners, 50, 0.01, 10);
-      for (let i=0; i<corners.rows; i++) {
-        let x = corners.data32F[i*2], y = corners.data32F[i*2+1];
-        cv.circle(proc, new cv.Point(x,y), 3, [255,0,0,255], -1);
-      }
-
-      // draw processed on right half
-      cv.imshow(canvas, proc, {dx:640, dy:0});
-
-      // cleanup
-      src.delete(); proc.delete(); blurred.delete(); hsv.delete();
-      lower.delete(); upper.delete(); mask.delete();
-      contours.delete(); hierarchy.delete(); gray.delete(); corners.delete();
-
-      // schedule next frame
-      requestAnimationFrame(processFrame);
-    }
+      requestAnimationFrame(process);
+    });
+  }
   </script>
 </body>
 </html>
