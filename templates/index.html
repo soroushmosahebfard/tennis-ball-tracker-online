@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>🎾 TF.js Tennis-Ball Tracker</title>
+  <meta charset="UTF-8">
+  <title>🎾 Hough-Circle Tennis-Ball Tracker</title>
   <style>
-    body { background:#111; color:#fff; text-align:center; font-family:sans-serif; }
-    #wrapper { display:flex; justify-content:center; gap:20px; margin-top:20px; }
-    .feed { display:flex; flex-direction:column; align-items:center; }
-    video, canvas { border:4px solid #4caf50; }
-    .feed p { margin:6px 0; }
+    body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
+    #wrapper { display: flex; justify-content: center; gap: 20px; margin-top: 20px; }
+    .feed { display: flex; flex-direction: column; align-items: center; }
+    video, canvas { border: 4px solid #4caf50; }
+    .feed p { margin: 6px 0; }
   </style>
 </head>
 <body>
-  <h1>🔍 TF.js COCO-SSD Tennis-Ball Tracker</h1>
+  <h1>🔍 Hough-Circle Tennis-Ball Tracker</h1>
   <div id="wrapper">
     <div class="feed">
       <p>Raw Feed</p>
@@ -24,50 +24,74 @@
     </div>
   </div>
 
-  <!-- load TF.js and COCO-SSD model -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.9.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
+  <!-- Start camera on load -->
   <script>
-    const video  = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx    = canvas.getContext('2d');
+    document.addEventListener('DOMContentLoaded', () => {
+      const video = document.getElementById('video');
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => { video.srcObject = stream; video.play(); })
+          .catch(err => alert('Camera error: ' + err.message));
+      } else {
+        alert('Camera API not supported');
+      }
+    });
+  </script>
 
-    // 1) start webcam
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(stream => video.srcObject = stream)
-      .catch(err => alert('Camera error: ' + err.message));
+  <!-- Load OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <script>
+    function onOpenCvReady() {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const w = 640, h = 480;
 
-    // 2) once video is playing, load the model
-    video.addEventListener('playing', async () => {
-      const model = await cocoSsd.load();
-      console.log('✅ COCO-SSD model loaded');
+      // Pre-allocate Mats
+      const src    = new cv.Mat(h, w, cv.CV_8UC4);
+      const gray   = new cv.Mat();
+      const blur   = new cv.Mat();
+      const circles = new cv.Mat();
 
-      // 3) detection loop
-      async function detect() {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const predictions = await model.detect(video);
+      // Processing loop\ n      function process() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          // Capture frame
+          ctx.drawImage(video, 0, 0, w, h);
+          let imgData = ctx.getImageData(0, 0, w, h);
+          src.data.set(imgData.data);
 
-        // draw boxes for any "sports ball"
-        predictions.forEach(p => {
-          if (p.class === 'sports ball' && p.score > 0.5) {
-            const [x, y, w, h] = p.bbox;
+          // Gray + blur
+          cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+          cv.GaussianBlur(gray, blur, new cv.Size(9,9), 2);
+
+          // HoughCircles
+          cv.HoughCircles(blur, circles, cv.HOUGH_GRADIENT,
+                          1.2, 100, 50, 30, 10, 200);
+
+          // Draw raw
+          ctx.drawImage(video, 0, 0, w, h);
+
+          // Draw first circle
+          if (circles.rows > 0) {
+            const x = circles.data32F[0];
+            const y = circles.data32F[1];
+            const r = circles.data32F[2];
             ctx.strokeStyle = '#FFFF00';
             ctx.lineWidth   = 4;
             ctx.beginPath();
-            ctx.rect(x, y, w, h);
+            ctx.arc(x, y, r, 0, 2 * Math.PI);
             ctx.stroke();
-            ctx.font = '20px sans-serif';
-            ctx.fillStyle = '#FFFF00';
-            ctx.fillText('🎾', x + 5, y + 25);
           }
-        });
-
-        requestAnimationFrame(detect);
+        }
+        requestAnimationFrame(process);
       }
 
-      detect();
-    });
+      // Kick off
+      process();
+    }
+    // Bind callback
+    if (typeof cv !== 'undefined') cv['onRuntimeInitialized'] = onOpenCvReady;
+    else window.addEventListener('opencvload', onOpenCvReady);
   </script>
 </body>
 </html>
