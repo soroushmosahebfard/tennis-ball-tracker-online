@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <title>Tennis Ball Tracker</title>
   <style>
-    body { background:#121212; color:#fff; text-align:center; font-family:sans-serif; margin:0; padding:20px; }
-    img  { border:2px solid #0f0; max-width:100%; height:auto; }
+    body { background: #111; color: #eee; text-align: center; }
+    img  { border: 4px solid #4caf50; margin-top: 20px; }
   </style>
 </head>
 <body>
-  <h1>Tennis Ball + Corner Tracking</h1>
-  <img src="{{ url_for('video_feed') }}" alt="Video Feed">
+  <h1>Live Tennis-Ball Tracker</h1>
+  <img src="{{ url_for('video_feed') }}" width="640" />
 </body>
 </html>
