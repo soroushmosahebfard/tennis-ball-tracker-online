@@ -2,17 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>🎾 Robust Tennis-Ball Tracker</title>
+  <title>🎾 Hybrid Tennis-Ball Tracker</title>
   <style>
-    body { background:#111; color:#fff; text-align:center; margin:0; }
-    #wrapper { display:flex; justify-content:center; gap:20px; padding:20px; }
-    .feed { display:flex; flex-direction:column; align-items:center; }
-    video, canvas { border:4px solid #4caf50; }
-    .feed p { margin:8px 0; font-size:1.2em; }
+    body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
+    #wrapper { display: flex; justify-content: center; gap: 20px; padding: 20px; }
+    .feed { display: flex; flex-direction: column; align-items: center; }
+    video, canvas { border: 4px solid #4caf50; }
+    .feed p { margin: 8px 0; font-size: 1.1em; }
   </style>
 </head>
 <body>
-  <h1>🔍 Robust Tennis-Ball Tracker (TF.js)</h1>
+  <h1>🔍 Hybrid Tennis-Ball Tracker (ML + Hough)</h1>
   <div id="wrapper">
     <div class="feed">
       <p>Raw Feed</p>
@@ -24,58 +24,111 @@
     </div>
   </div>
 
+  <!-- Offscreen canvas for ROI processing -->
+  <canvas id="hidden" width="640" height="480" style="display:none;"></canvas>
+
   <!-- 1) Load TF.js & COCO-SSD -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.9.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <!-- 2) Load OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
   <script>
-    async function setupCamera() {
-      const video = document.getElementById('video');
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.srcObject = stream;
-      return new Promise(res => video.onloadedmetadata = () => res(video));
-    }
+  // Set up camera
+  async function setupCamera() {
+    const video = document.getElementById('video');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    await new Promise(res => video.onloadedmetadata = res);
+    video.play();
+    return video;
+  }
 
-    async function main() {
-      // 2) Start the webcam
-      const video  = await setupCamera();
-      video.play();
+  async function main() {
+    // 3) Start camera & load ML model
+    const video = await setupCamera();
+    const model = await cocoSsd.load();
+    console.log('✅ COCO-SSD loaded');
+    const canvas = document.getElementById('canvas');
+    const ctx    = canvas.getContext('2d');
+    const hidden = document.getElementById('hidden');
+    const hctx   = hidden.getContext('2d');
+    const w = 640, h = 480;
 
-      // 3) Load the COCO-SSD model
-      const model = await cocoSsd.load();
-      console.log('✅ COCO-SSD model loaded');
+    // Wait for OpenCV
+    await new Promise(res => {
+      if (cv.getBuildInformation) return res();
+      cv['onRuntimeInitialized'] = res;
+    });
+    console.log('✅ OpenCV.js ready');
 
-      const canvas = document.getElementById('canvas');
-      const ctx    = canvas.getContext('2d');
+    // Pre-allocate Mats
+    const src   = new cv.Mat();
+    const gray  = new cv.Mat();
+    const blur  = new cv.Mat();
+    const circles = new cv.Mat();
 
-      // 4) Run detection in a loop
-      async function detectFrame() {
-        // draw the raw frame
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    async function detectFrame() {
+      // 4) Draw raw frame
+      ctx.drawImage(video, 0, 0, w, h);
 
-        // run the model on the video element directly
-        const predictions = await model.detect(video);
+      // 5) ML: detect ball roughly
+      const predictions = await model.detect(video);
+      const ball = predictions
+        .filter(p => p.class === 'sports ball' && p.score > 0.5)
+        .sort((a,b) => b.score - a.score)[0];
 
-        // overlay any tennis balls (class "sports ball")
-        predictions.forEach(p => {
-          if (p.class === 'sports ball' && p.score > 0.5) {
-            const [x, y, w, h] = p.bbox;
-            ctx.strokeStyle = '#FFFF00';
-            ctx.lineWidth   = 4;
-            ctx.strokeRect(x, y, w, h);
-            ctx.font = '24px sans-serif';
-            ctx.fillStyle = '#FFFF00';
-            ctx.fillText('🎾 ' + Math.round(p.score*100) + '%', x, y - 8);
-          }
-        });
+      if (ball) {
+        // draw ML box
+        const [bx, by, bw, bh] = ball.bbox;
+        ctx.strokeStyle = '#FF0';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx, by, bw, bh);
 
-        requestAnimationFrame(detectFrame);
+        // 6) Crop ROI for Hough refine
+        hctx.clearRect(0,0,w,h);
+        hctx.drawImage(video, bx, by, bw, bh, 0, 0, bw, bh);
+        let imgData = hctx.getImageData(0,0,bw,bh);
+        src.delete(); src = cv.matFromImageData(imgData);
+
+        // preprocess ROI
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        cv.GaussianBlur(gray, blur, new cv.Size(9,9), 2);
+
+        // refine with HoughCircles
+        cv.HoughCircles(
+          blur, circles, cv.HOUGH_GRADIENT,
+          1.2, bh/2,  // dp, minDist
+          50,         // param1
+          30,         // param2
+          bh*0.2,     // minRadius
+          bh*0.6      // maxRadius
+        );
+
+        // draw refined circle (global coords)
+        if (circles.rows > 0) {
+          const c = circles.data32F;
+          // take strongest
+          const cx = bx + c[0];
+          const cy = by + c[1];
+          const r  = c[2];
+          ctx.strokeStyle = '#0FF';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2*Math.PI);
+          ctx.stroke();
+        }
+
+        src.delete(); circles.delete(); gray.delete(); blur.delete();
       }
 
-      detectFrame();
+      requestAnimationFrame(detectFrame);
     }
 
-    main().catch(console.error);
+    detectFrame();
+  }
+
+  main().catch(console.error);
   </script>
 </body>
 </html>
