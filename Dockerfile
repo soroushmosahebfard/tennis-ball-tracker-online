@@ -10,4 +10,4 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-CMD ["gunicorn", "app:app", "--workers", "1", "--bind", "0.0.0.0:5000"]
+CMD gunicorn app:app --workers 1 --bind 0.0.0.0:$PORT
