@@ -2,18 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>🎾 Simple JS Tennis-Ball Tracker</title>
+  <title>🎾 JS Tennis-Ball Tracker (Centroid)</title>
   <style>
     body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
-    video, canvas { border: 4px solid #4caf50; margin: 10px; }
-    #wrapper { display: flex; justify-content: center; gap: 20px; }
+    #wrapper { display: flex; justify-content: center; gap: 20px; margin-top: 20px; }
     .feed { display: flex; flex-direction: column; align-items: center; }
+    video, canvas { border: 4px solid #4caf50; }
     .feed p { margin: 6px 0; }
-    #hidden { display: none; }
   </style>
 </head>
 <body>
-  <h1>🔍 Live Tennis-Ball Tracker (Pure JS)</h1>
+  <h1>🔍 JS Tennis-Ball Tracker (Centroid Method)</h1>
   <div id="wrapper">
     <div class="feed">
       <p>Raw Feed</p>
@@ -21,62 +20,65 @@
     </div>
     <div class="feed">
       <p>Detected</p>
-      <canvas id="output" width="640" height="480"></canvas>
+      <canvas id="canvas" width="640" height="480"></canvas>
     </div>
   </div>
 
-  <!-- Offscreen canvas to grab frames -->
-  <canvas id="hidden" width="640" height="480"></canvas>
+  <!-- hidden canvas for pixel capture -->
+  <canvas id="hidden" width="640" height="480" style="display:none;"></canvas>
 
   <script>
     const video = document.getElementById('video');
     const hidden = document.getElementById('hidden');
-    const output = document.getElementById('output');
+    const canvas = document.getElementById('canvas');
     const hctx = hidden.getContext('2d');
-    const octx = output.getContext('2d');
-    const width = 640, height = 480;
+    const ctx = canvas.getContext('2d');
+    const w = 640, h = 480;
 
-    // 1) Start camera
+    // start camera
     if (navigator.mediaDevices?.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ video: true })
-        .then(stream => { video.srcObject = stream; })
-        .catch(err => { alert('Camera error: ' + err.message); });
+        .then(stream => video.srcObject = stream)
+        .catch(err => alert('Camera error: ' + err.message));
     } else {
       alert('getUserMedia not supported');
     }
 
     video.addEventListener('play', () => {
-      // run detection every frame
       function detect() {
-        // draw current frame to hidden canvas
-        hctx.drawImage(video, 0, 0, width, height);
-        const frame = hctx.getImageData(0, 0, width, height);
+        // draw input frame
+        hctx.drawImage(video, 0, 0, w, h);
+        const frame = hctx.getImageData(0, 0, w, h);
         const data = frame.data;
 
-        let xMin = width, xMax = 0, yMin = height, yMax = 0;
-        // threshold for tennis-ball greenish-yellow
+        // accumulate greenish pixels
+        let sumX = 0, sumY = 0, count = 0;
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i], g = data[i+1], b = data[i+2];
-          // simple threshold: green dominant and bright
-          if (g > 150 && g > r + 20 && g > b + 20) {
-            const idx = i / 4;
-            const x = idx % width;
-            const y = Math.floor(idx / width);
-            if (x < xMin) xMin = x;
-            if (x > xMax) xMax = x;
-            if (y < yMin) yMin = y;
-            if (y > yMax) yMax = y;
+          // improved threshold: green dominant & bright
+          if (g > 120 && g > r + 30 && g > b + 30) {
+            const idx = i >> 2;
+            const x = idx % w;
+            const y = (idx / w) | 0;
+            sumX += x;
+            sumY += y;
+            count++;
           }
         }
 
-        // draw raw frame
-        octx.drawImage(video, 0, 0, width, height);
+        // draw raw
+        ctx.drawImage(video, 0, 0, w, h);
 
-        // if any pixel passed threshold, draw box
-        if (xMax > xMin && yMax > yMin) {
-          octx.strokeStyle = '#FFFF00';
-          octx.lineWidth = 4;
-          octx.strokeRect(xMin, yMin, xMax - xMin, yMax - yMin);
+        // if enough pixels, draw circle at centroid
+        if (count > 200) {
+          const cx = sumX / count;
+          const cy = sumY / count;
+          const radius = Math.sqrt(count / Math.PI);
+          ctx.strokeStyle = '#FFFF00';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+          ctx.stroke();
         }
 
         requestAnimationFrame(detect);
