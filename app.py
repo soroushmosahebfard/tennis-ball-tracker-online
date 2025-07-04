@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, send_file
 import cv2, numpy as np
 import io
+import base64
 
 app = Flask(__name__)
 
